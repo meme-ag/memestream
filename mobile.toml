@@ -1,0 +1,5 @@
+[app]
+name = "t5-rs"
+stylized-name = "t5.rs"
+template-pack = "wry"
+identifier = "t5rs.example.com"

@@ -1,0 +1,31 @@
+# Rust
+target/
+**/*.rs.bk
+
+# cargo-mobile2
+.cargo/
+
+# macOS
+.DS_Store
+
+# Tailwind CSS
+assets/out/
+
+# Material Tailwind
+node_modules/
+
+# Dioxus Web
+dist/
+
+# Turbo
+.turbo/
+
+# Build system
+Cargo.toml.bak
+
+# Env
+.env
+
+# Android signing
+*.keystore
+*.keystore.asc

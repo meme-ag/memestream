@@ -1,0 +1,141 @@
+name: Build Android App (.apk)
+
+on:
+  # push:
+  #   branches:
+  #     - master
+  #   paths:
+  #     - "Cargo.mobile.toml"
+  #     - "Dioxus.toml"
+  #     - "mobile.toml"
+  #     - "package.json"
+  #     - "src/**"
+  #     - "common/**"
+  #     - "assets/**"
+  #     - "gen/android/**"
+  # pull_request:
+  #   branches:
+  #     - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions: write-all
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "temurin"
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - uses: nttld/setup-ndk@v1
+        id: ndk
+        with:
+          ndk-version: r26d
+          add-to-path: true
+          link-to-sdk: true
+          local-cache: true
+
+      - name: Setup NDK Environment Variables
+        env:
+          NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: |
+          export ANDROID_NDK_HOME=$NDK_HOME
+          export TOOLCHAIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64
+
+          echo "NDK_HOME=$NDK_HOME" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME" >> $GITHUB_ENV
+          echo "TOOLCHAIN=$TOOLCHAIN" >> $GITHUB_ENV
+          echo "AR=$TOOLCHAIN/bin/llvm-ar" >> $GITHUB_ENV
+          echo "LD=$TOOLCHAIN/bin/ld" >> $GITHUB_ENV
+          echo "RANLIB=$TOOLCHAIN/bin/llvm-ranlib" >> $GITHUB_ENV
+          echo "STRIP=$TOOLCHAIN/bin/llvm-strip" >> $GITHUB_ENV
+
+          echo "PATH=$TOOLCHAIN/bin:$PATH" >> $GITHUB_ENV
+
+      - name: Setup Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Cargo Mobile CLI
+        run: cargo install --git https://github.com/tauri-apps/cargo-mobile2
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Bun dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate TailwindCSS
+        run: bun build:tailwind
+
+      - name: Copy Cargo.mobile.toml
+        run: mv Cargo.mobile.toml Cargo.toml
+
+      - name: Run cargo mobile init
+        run: cargo mobile init
+
+      # - name: Append release config to .cargo/config.toml
+      #   run: |
+      #     cat .cargo/config.toml
+
+      #     {
+      #       cat .cargo/config.toml;
+      #       printf "\n[target.aarch64-linux-android]\nlinker = \"/home/runner/.setup-ndk/r26d/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android24-clang\"\n"
+      #       printf "\n[profile.release]\nopt-level = \"z\"\ndebug = false\nlto = true\ncodegen-units = 1\npanic = \"abort\"\nstrip = true\nincremental = false\n";
+      #     } > .cargo/config.toml
+
+      #     cat .cargo/config.toml
+
+      - name: Create .env
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_API_KEY: ${{ secrets.SUPABASE_API_KEY }}
+          SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: printf "API_URL=$API_URL\nSUPABASE_URL=$SUPABASE_URL\nSUPABASE_API_KEY=$SUPABASE_API_KEY\nSUPABASE_JWT_SECRET=$SUPABASE_JWT_SECRET\nDATABASE_URL=$DATABASE_URL\n" > .env
+
+      - name: Build
+        run: cargo android apk build --release --split-per-abi
+
+      - name: Sign APKs with keystore
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
+        run: |
+          echo $ANDROID_KEYSTORE > release.keystore.asc
+          gpg -d --passphrase $ANDROID_KEYSTORE_PASSWORD --batch --yes release.keystore.asc > release.keystore
+          jarsigner -keystore release.keystore ./gen/android/app/build/outputs/apk/arm/release/app-arm-release-unsigned.apk $ANDROID_KEYSTORE_ALIAS
+          jarsigner -keystore release.keystore ./gen/android/app/build/outputs/apk/arm64/release/app-arm64-release-unsigned.apk $ANDROID_KEYSTORE_ALIAS
+          jarsigner -keystore release.keystore ./gen/android/app/build/outputs/apk/x86/release/app-x86-release-unsigned.apk $ANDROID_KEYSTORE_ALIAS
+          jarsigner -keystore release.keystore ./gen/android/app/build/outputs/apk/x86_64/release/app-x86_64-release-unsigned.apk $ANDROID_KEYSTORE_ALIAS
+
+      # - name: Upload artifact
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: apk
+      #     path: gen/android/app/build/outputs/apk/**/*.apk
+
+      # or Upload to a release
+
+      - name: Upload to release v1.0.0
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v1.0.0 ./gen/android/app/build/outputs/apk/arm/release/*.apk ./gen/android/app/build/outputs/apk/arm64/release/*.apk ./gen/android/app/build/outputs/apk/x86/release/*.apk ./gen/android/app/build/outputs/apk/x86_64/release/*.apk --clobber
